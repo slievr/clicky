@@ -8,6 +8,10 @@ on:
 env: # Define workflow-level environment variables
   EXECUTABLE_NAME: clicky
 
+# Add permissions for creating releases and uploading assets
+permissions:
+  contents: write
+
 jobs:
   build-release-linux:
     name: Build Release (Linux)
