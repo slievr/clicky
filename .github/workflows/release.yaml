@@ -25,7 +25,7 @@ jobs:
           toolchain: stable
 
       - name: Install Linux dependencies for rdev and X11
-        run: sudo apt-get update && sudo apt-get install -y libx11-dev libxtst-dev libudev-dev pkg-config libxcb-dev
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev libxtst-dev libudev-dev pkg-config libxcb1-dev
 
       - name: Cache Cargo dependencies
         uses: actions/cache@v4
