@@ -3,81 +3,28 @@
 use eframe::egui::IconData;
 use eframe::{egui, App, Frame};
 use image::ImageFormat;
-use rdev::{listen, simulate, Button, EventType, Key}; // Add Key and listen back
+use rdev::{listen, simulate, Button, EventType, Key};
 use std::io::Cursor;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 // Define the application state struct
 struct ClickyApp {
     clicking: Arc<Mutex<bool>>,
-    cps: Arc<Mutex<f64>>, // Add CPS state
+    cps: Arc<Mutex<f64>>,
+    clicker_thread: Arc<Mutex<Option<(JoinHandle<()>, Arc<AtomicBool>)>>>, // Store thread handle and stop flag
 }
 
 impl Default for ClickyApp {
     fn default() -> Self {
         let clicking = Arc::new(Mutex::new(false));
-        let cps = Arc::new(Mutex::new(1.0)); // Initialize CPS to 1.0
-        let clicking_clone_clicker = Arc::clone(&clicking);
+        let cps = Arc::new(Mutex::new(1.0));
+        let clicker_thread = Arc::new(Mutex::new(None)); // No clicking thread initially
         let clicking_clone_listener = Arc::clone(&clicking);
-        let cps_clone_clicker = Arc::clone(&cps);
-
-        // --- Clicking Thread ---
-        thread::spawn(move || {
-            let mut last_known_state = *clicking_clone_clicker.lock().unwrap(); // Initialize with current state
-            eprintln!(
-                "Background thread: Initial clicking state = {}",
-                last_known_state
-            );
-
-            loop {
-                // Read shared state *inside* the loop
-                let is_clicking = *clicking_clone_clicker.lock().unwrap();
-                let current_cps: f64 = *cps_clone_clicker.lock().unwrap(); // Read CPS value on each iteration
-
-                // Log the state ONLY if it changed
-                if is_clicking != last_known_state {
-                    eprintln!(
-                        "Background thread: Clicking state changed to {}",
-                        is_clicking
-                    );
-                    last_known_state = is_clicking; // Update the last known state
-                }
-
-                if is_clicking {
-                    // Calculate delay based on the current CPS value
-                    let cps_value = current_cps.max(1.0_f64);
-
-                    // Simplified direct approach for accurate CPS
-                    // For higher CPS values, we need to be more precise with timing
-
-                    // Calculate time between clicks in microseconds for more precision
-                    let delay_us = (1_000_000.0_f64 / cps_value).round() as u64;
-
-                    // Single click with precise timing
-                    if let Err(simulate_error) = simulate(&EventType::ButtonPress(Button::Left)) {
-                        eprintln!("Error simulating mouse press: {:?}", simulate_error);
-                    }
-
-                    // Very minimal delay between press and release (0.01ms)
-                    thread::sleep(Duration::from_nanos(10));
-
-                    if let Err(simulate_error) = simulate(&EventType::ButtonRelease(Button::Left)) {
-                        eprintln!("Error simulating mouse release: {:?}", simulate_error);
-                    }
-
-                    // Calculate remaining time to sleep to maintain accurate CPS
-                    // Subtract the time we already spent on the press/release (10µs)
-                    if delay_us > 10 {
-                        thread::sleep(Duration::from_micros(delay_us - 10));
-                    }
-                } else {
-                    // Sleep longer when not clicking
-                    thread::sleep(Duration::from_millis(100));
-                }
-            }
-        });
+        let cps_clone = Arc::clone(&cps);
+        let clicker_thread_clone = Arc::clone(&clicker_thread);
 
         // --- Global Keyboard Listener Thread ---
         thread::spawn(move || {
@@ -94,7 +41,18 @@ impl Default for ClickyApp {
                                 if ctrl_pressed && alt_pressed {
                                     let mut clicking_guard =
                                         clicking_clone_listener.lock().unwrap();
-                                    *clicking_guard = !*clicking_guard;
+                                    let was_clicking = *clicking_guard;
+                                    *clicking_guard = !was_clicking;
+
+                                    if !was_clicking && *clicking_guard {
+                                        // Start clicking thread when activated via hotkey
+                                        let current_cps = *cps_clone.lock().unwrap();
+                                        start_clicking_thread(&clicker_thread_clone, current_cps);
+                                    } else if was_clicking && !*clicking_guard {
+                                        // Stop clicking thread when deactivated via hotkey
+                                        stop_clicking_thread(&clicker_thread_clone);
+                                    }
+
                                     eprintln!(
                                         "Global Keybind (Ctrl+Alt+K) pressed: Toggling clicking state to {}",
                                         *clicking_guard
@@ -119,10 +77,82 @@ impl Default for ClickyApp {
             if let Err(error) = listen(callback) {
                 eprintln!("Error setting up global keyboard listener: {:?}", error);
             }
-            println!("Global keyboard listener stopped."); // Should ideally not be reached unless there's an error
+            println!("Global keyboard listener stopped.");
         });
 
-        Self { clicking, cps }
+        Self {
+            clicking,
+            cps,
+            clicker_thread,
+        }
+    }
+}
+
+// Helper function to start the clicking thread
+fn start_clicking_thread(
+    clicker_thread: &Arc<Mutex<Option<(JoinHandle<()>, Arc<AtomicBool>)>>>,
+    initial_cps: f64,
+) {
+    let mut thread_guard = clicker_thread.lock().unwrap();
+
+    // Only start a new thread if one isn't already running
+    if thread_guard.is_none() {
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let stop_flag_clone = Arc::clone(&stop_flag);
+        let cps_value = initial_cps.max(1.0);
+
+        // Calculate delay once outside the loop
+        let delay_us = (1_000_000.0_f64 / cps_value).round() as u64;
+
+        // Spawn the clicking thread
+        let handle = thread::spawn(move || {
+            eprintln!("Clicking thread started with CPS: {}", cps_value);
+
+            while !stop_flag_clone.load(Ordering::SeqCst) {
+                // Single click with precise timing
+                if let Err(simulate_error) = simulate(&EventType::ButtonPress(Button::Left)) {
+                    eprintln!("Error simulating mouse press: {:?}", simulate_error);
+                }
+
+                // Very minimal delay between press and release
+                thread::sleep(Duration::from_micros(10));
+
+                if let Err(simulate_error) = simulate(&EventType::ButtonRelease(Button::Left)) {
+                    eprintln!("Error simulating mouse release: {:?}", simulate_error);
+                }
+
+                // Sleep for the pre-calculated duration
+                if delay_us > 10 {
+                    thread::sleep(Duration::from_micros(delay_us - 10));
+                }
+
+                // Check stop flag more frequently for faster response
+                if stop_flag_clone.load(Ordering::SeqCst) {
+                    break;
+                }
+            }
+
+            eprintln!("Clicking thread stopped");
+        });
+
+        // Store the thread handle and stop flag
+        *thread_guard = Some((handle, stop_flag));
+    }
+}
+
+// Helper function to stop the clicking thread
+fn stop_clicking_thread(clicker_thread: &Arc<Mutex<Option<(JoinHandle<()>, Arc<AtomicBool>)>>>) {
+    let mut thread_guard = clicker_thread.lock().unwrap();
+
+    if let Some((handle, stop_flag)) = thread_guard.take() {
+        // Signal the thread to stop
+        stop_flag.store(true, Ordering::SeqCst);
+
+        // Optionally wait for the thread to finish
+        // Uncomment if you want to ensure the thread has stopped before continuing
+        // if handle.join().is_err() {
+        //     eprintln!("Error joining clicking thread");
+        // }
     }
 }
 
@@ -134,8 +164,9 @@ impl App for ClickyApp {
             ui.separator();
 
             let mut clicking_guard = self.clicking.lock().unwrap();
-            let mut cps_guard = self.cps.lock().unwrap(); // Add CPS guard
+            let mut cps_guard = self.cps.lock().unwrap();
             let is_clicking = *clicking_guard;
+            let clicker_thread = Arc::clone(&self.clicker_thread);
 
             ui.horizontal(|ui| {
                 // Start Button
@@ -144,6 +175,11 @@ impl App for ClickyApp {
                     .clicked()
                 {
                     *clicking_guard = true;
+                    let current_cps = *cps_guard;
+
+                    // Start clicking thread when button is clicked
+                    start_clicking_thread(&clicker_thread, current_cps);
+
                     eprintln!(
                         "Start Button clicked: Toggling clicking state to {}",
                         *clicking_guard
@@ -156,6 +192,10 @@ impl App for ClickyApp {
                     .clicked()
                 {
                     *clicking_guard = false;
+
+                    // Stop clicking thread when button is clicked
+                    stop_clicking_thread(&clicker_thread);
+
                     eprintln!(
                         "Stop Button clicked: Toggling clicking state to {}",
                         *clicking_guard
@@ -168,21 +208,22 @@ impl App for ClickyApp {
             ui.separator();
 
             // --- CPS Slider ---
-            ui.add(
-                // Set slider range to max 150 CPS
+            let previous_cps = *cps_guard;
+            ui.add_enabled(
+                !is_clicking, // Disable slider when clicking is active
                 egui::Slider::new(&mut *cps_guard, 1.0..=150.0)
                     .text("Clicks per Second")
                     .logarithmic(false)
                     .show_value(true),
             );
+
             ui.separator();
 
             // Display the current status with color
             let (status_text, status_color) = if *clicking_guard {
                 ("Clicking Active", egui::Color32::GREEN)
             } else {
-                ("Clicking Inactive", egui::Color32::GOLD) // Using GOLD as a shade of orange
-                                                           // Or use egui::Color32::from_rgb(255, 165, 0) for a specific orange
+                ("Clicking Inactive", egui::Color32::GOLD)
             };
             ui.label(egui::RichText::new(status_text).color(status_color));
         });
@@ -192,9 +233,17 @@ impl App for ClickyApp {
     }
 }
 
+// Clean up any running threads when the app is closed
+impl Drop for ClickyApp {
+    fn drop(&mut self) {
+        // Stop the clicking thread if it's running
+        stop_clicking_thread(&self.clicker_thread);
+    }
+}
+
 fn load_icon(bytes: &[u8]) -> Result<IconData, String> {
     let image = image::load(Cursor::new(bytes), ImageFormat::Png)
-        .map_err(|e| e.to_string())? // Convert image error to String
+        .map_err(|e| e.to_string())?
         .to_rgba8();
     let (width, height) = image.dimensions();
     Ok(IconData {
