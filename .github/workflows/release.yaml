@@ -24,6 +24,9 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Install Linux dependencies for rdev and X11
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev libxtst-dev libudev-dev pkg-config libxcb-dev
+
       - name: Cache Cargo dependencies
         uses: actions/cache@v4
         with:
@@ -77,7 +80,6 @@ jobs:
   build-release-windows:
     name: Build Release (Windows)
     runs-on: windows-latest
-    needs: build-release-linux # Wait for Linux job to create the release
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
