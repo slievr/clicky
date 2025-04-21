@@ -70,7 +70,8 @@ impl Default for ClickyApp {
                             Key::Alt => alt_pressed = true,
                             Key::KeyK => {
                                 if ctrl_pressed && alt_pressed {
-                                    let mut clicking_guard = clicking_clone_listener.lock().unwrap();
+                                    let mut clicking_guard =
+                                        clicking_clone_listener.lock().unwrap();
                                     *clicking_guard = !*clicking_guard;
                                     eprintln!(
                                         "Global Keybind (Ctrl+Alt+K) pressed: Toggling clicking state to {}",
@@ -129,7 +130,9 @@ impl App for ClickyApp {
             }
 
             // Update label to reflect the global keybind
-            ui.label("Click the button or press Left Ctrl + Left Alt + K globally to toggle clicking.");
+            ui.label(
+                "Click the button or press Left Ctrl + Left Alt + K globally to toggle clicking.",
+            );
             ui.separator();
 
             // Display the current status
@@ -150,7 +153,9 @@ impl App for ClickyApp {
 
 fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([200.0, 100.0]), // Small window
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([300.0, 150.0]) // Increase window size
+            .with_resizable(false), // Optional: Make window non-resizable if desired
         ..Default::default()
     };
 
