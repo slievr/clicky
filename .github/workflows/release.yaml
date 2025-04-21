@@ -1,0 +1,130 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - 'v*.*.*' # Trigger on tags like v1.0.0, v1.2.3
+
+env: # Define workflow-level environment variables
+  EXECUTABLE_NAME: clicky
+
+jobs:
+  build-release-linux:
+    name: Build Release (Linux)
+    runs-on: ubuntu-latest
+    outputs: # Define outputs for other jobs
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      release_tag: ${{ steps.prep.outputs.release_tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build release binary
+        run: cargo build --release --verbose
+
+      - name: Prepare release artifact name (Linux)
+        id: prep
+        run: |
+          # Get the version tag (e.g., v1.0.0)
+          VERSION_TAG=${{ github.ref_name }}
+          # Define the artifact name using the environment variable
+          ARTIFACT_NAME="${{ env.EXECUTABLE_NAME }}-linux-amd64"
+          # Rename the executable
+          mv "target/release/${{ env.EXECUTABLE_NAME }}" "target/release/${ARTIFACT_NAME}"
+          echo "artifact_path=target/release/${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
+          echo "artifact_name=${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
+          echo "release_tag=${VERSION_TAG}" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.prep.outputs.release_tag }}
+          release_name: Release ${{ steps.prep.outputs.release_tag }}
+          body: |
+            Release build for ${{ steps.prep.outputs.release_tag }}
+          draft: false
+          prerelease: false
+
+      - name: Upload Release Asset (Linux)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # Use the output URL
+          asset_path: ${{ steps.prep.outputs.artifact_path }}
+          asset_name: ${{ steps.prep.outputs.artifact_name }}
+          asset_content_type: application/octet-stream
+
+  build-release-windows:
+    name: Build Release (Windows)
+    runs-on: windows-latest
+    needs: build-release-linux # Wait for Linux job to create the release
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      # No specific system dependencies needed for rdev on Windows build runner
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build release binary
+        run: cargo build --release --verbose
+
+      - name: Prepare release artifact name (Windows)
+        id: prep_win
+        run: |
+          # Define the artifact name with .exe extension using the environment variable
+          $ARTIFACT_NAME="${{ env.EXECUTABLE_NAME }}-windows-amd64.exe"
+          # Define the original path
+          $ORIGINAL_PATH="target/release/${{ env.EXECUTABLE_NAME }}.exe"
+          # Define the new path
+          $NEW_PATH="target/release/${ARTIFACT_NAME}"
+          # Rename the executable
+          Move-Item -Path $ORIGINAL_PATH -Destination $NEW_PATH
+          # Set outputs using GitHub Environment File syntax
+          echo "artifact_path=${NEW_PATH}" >> $env:GITHUB_OUTPUT
+          echo "artifact_name=${ARTIFACT_NAME}" >> $env:GITHUB_OUTPUT
+        shell: pwsh # Use PowerShell for Windows commands
+
+      - name: Upload Release Asset (Windows)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.build-release-linux.outputs.upload_url }} # Get URL from Linux job
+          asset_path: ${{ steps.prep_win.outputs.artifact_path }}
+          asset_name: ${{ steps.prep_win.outputs.artifact_name }}
+          asset_content_type: application/vnd.microsoft.portable-executable # More specific type for .exe
