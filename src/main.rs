@@ -114,9 +114,6 @@ fn start_clicking_thread(
                     eprintln!("Error simulating mouse press: {:?}", simulate_error);
                 }
 
-                // Very minimal delay between press and release
-                thread::sleep(Duration::from_micros(10));
-
                 if let Err(simulate_error) = simulate(&EventType::ButtonRelease(Button::Left)) {
                     eprintln!("Error simulating mouse release: {:?}", simulate_error);
                 }
@@ -208,7 +205,6 @@ impl App for ClickyApp {
             ui.separator();
 
             // --- CPS Slider ---
-            let previous_cps = *cps_guard;
             ui.add_enabled(
                 !is_clicking, // Disable slider when clicking is active
                 egui::Slider::new(&mut *cps_guard, 1.0..=150.0)
