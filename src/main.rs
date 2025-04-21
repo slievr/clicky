@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // Hide console window on Windows in release builds
+
 use eframe::{egui, App, Frame};
 use rdev::{listen, simulate, Button, EventType, Key}; // Add Key and listen back
 use std::sync::{Arc, Mutex};
@@ -112,38 +114,48 @@ impl App for ClickyApp {
             ui.separator();
 
             let mut clicking_guard = self.clicking.lock().unwrap();
+            let is_clicking = *clicking_guard;
 
-            // Determine button text based on state
-            let button_text = if *clicking_guard {
-                "Stop Clicking"
-            } else {
-                "Start Clicking"
-            };
+            ui.horizontal(|ui| {
+                // Start Button
+                if ui
+                    .add_enabled(!is_clicking, egui::Button::new("Start Clicking"))
+                    .clicked()
+                {
+                    *clicking_guard = true;
+                    eprintln!(
+                        "Start Button clicked: Toggling clicking state to {}",
+                        *clicking_guard
+                    );
+                }
 
-            // Add the button and toggle state on click
-            if ui.button(button_text).clicked() {
-                *clicking_guard = !*clicking_guard; // Toggle the state
-                eprintln!(
-                    "Button clicked: Toggling clicking state to {}",
-                    *clicking_guard
-                );
-            }
+                // Stop Button
+                if ui
+                    .add_enabled(is_clicking, egui::Button::new("Stop Clicking"))
+                    .clicked()
+                {
+                    *clicking_guard = false;
+                    eprintln!(
+                        "Stop Button clicked: Toggling clicking state to {}",
+                        *clicking_guard
+                    );
+                }
+            });
 
             // Update label to reflect the global keybind
             ui.label(
-                "Click the button or press Left Ctrl + Left Alt + K globally to toggle clicking.",
+                "Or press Left Ctrl + Left Alt + K globally to toggle clicking.",
             );
             ui.separator();
 
-            // Display the current status
-            ui.label(format!(
-                "Status: {}",
-                if *clicking_guard {
-                    "Clicking Active"
-                } else {
-                    "Clicking Inactive"
-                }
-            ));
+            // Display the current status with color
+            let (status_text, status_color) = if *clicking_guard {
+                ("Clicking Active", egui::Color32::GREEN)
+            } else {
+                ("Clicking Inactive", egui::Color32::GOLD) // Using GOLD as a shade of orange
+                                                           // Or use egui::Color32::from_rgb(255, 165, 0) for a specific orange
+            };
+            ui.label(egui::RichText::new(status_text).color(status_color));
         });
 
         // Request repaint to ensure UI updates when state changes externally
