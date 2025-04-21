@@ -12,13 +12,16 @@ use std::time::Duration;
 // Define the application state struct
 struct ClickyApp {
     clicking: Arc<Mutex<bool>>,
+    cps: Arc<Mutex<f64>>, // Add CPS state
 }
 
 impl Default for ClickyApp {
     fn default() -> Self {
         let clicking = Arc::new(Mutex::new(false));
+        let cps = Arc::new(Mutex::new(1.0)); // Initialize CPS to 1.0
         let clicking_clone_clicker = Arc::clone(&clicking);
         let clicking_clone_listener = Arc::clone(&clicking);
+        let cps_clone_clicker = Arc::clone(&cps);
 
         // --- Clicking Thread ---
         thread::spawn(move || {
@@ -29,9 +32,9 @@ impl Default for ClickyApp {
             );
 
             loop {
-                // Add a small delay before locking to reduce contention if needed
-                thread::sleep(Duration::from_millis(5));
+                // Read shared state *inside* the loop
                 let is_clicking = *clicking_clone_clicker.lock().unwrap();
+                let current_cps: f64 = *cps_clone_clicker.lock().unwrap(); // Read CPS value on each iteration
 
                 // Log the state ONLY if it changed
                 if is_clicking != last_known_state {
@@ -43,20 +46,34 @@ impl Default for ClickyApp {
                 }
 
                 if is_clicking {
-                    // Simulate left mouse button press
+                    // Calculate delay based on the current CPS value
+                    let cps_value = current_cps.max(1.0_f64);
+
+                    // Simplified direct approach for accurate CPS
+                    // For higher CPS values, we need to be more precise with timing
+
+                    // Calculate time between clicks in microseconds for more precision
+                    let delay_us = (1_000_000.0_f64 / cps_value).round() as u64;
+
+                    // Single click with precise timing
                     if let Err(simulate_error) = simulate(&EventType::ButtonPress(Button::Left)) {
                         eprintln!("Error simulating mouse press: {:?}", simulate_error);
                     }
-                    // Small delay between press and release
-                    thread::sleep(Duration::from_millis(10));
-                    // Simulate left mouse button release
+
+                    // Very minimal delay between press and release (0.01ms)
+                    thread::sleep(Duration::from_nanos(10));
+
                     if let Err(simulate_error) = simulate(&EventType::ButtonRelease(Button::Left)) {
                         eprintln!("Error simulating mouse release: {:?}", simulate_error);
                     }
-                    // Delay between clicks - adjust as needed for desired speed
-                    thread::sleep(Duration::from_millis(20));
+
+                    // Calculate remaining time to sleep to maintain accurate CPS
+                    // Subtract the time we already spent on the press/release (10µs)
+                    if delay_us > 10 {
+                        thread::sleep(Duration::from_micros(delay_us - 10));
+                    }
                 } else {
-                    // Sleep when not clicking to avoid busy-waiting
+                    // Sleep longer when not clicking
                     thread::sleep(Duration::from_millis(100));
                 }
             }
@@ -105,7 +122,7 @@ impl Default for ClickyApp {
             println!("Global keyboard listener stopped."); // Should ideally not be reached unless there's an error
         });
 
-        Self { clicking }
+        Self { clicking, cps }
     }
 }
 
@@ -117,6 +134,7 @@ impl App for ClickyApp {
             ui.separator();
 
             let mut clicking_guard = self.clicking.lock().unwrap();
+            let mut cps_guard = self.cps.lock().unwrap(); // Add CPS guard
             let is_clicking = *clicking_guard;
 
             ui.horizontal(|ui| {
@@ -147,6 +165,16 @@ impl App for ClickyApp {
 
             // Update label to reflect the global keybind
             ui.label("Or press Left Ctrl + Left Alt + K globally to toggle clicking.");
+            ui.separator();
+
+            // --- CPS Slider ---
+            ui.add(
+                // Set slider range to max 150 CPS
+                egui::Slider::new(&mut *cps_guard, 1.0..=150.0)
+                    .text("Clicks per Second")
+                    .logarithmic(false)
+                    .show_value(true),
+            );
             ui.separator();
 
             // Display the current status with color
