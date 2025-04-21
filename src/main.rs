@@ -1,7 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // Hide console window on Windows in release builds
 
+use eframe::egui::IconData;
 use eframe::{egui, App, Frame};
+use image::ImageFormat;
 use rdev::{listen, simulate, Button, EventType, Key}; // Add Key and listen back
+use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -143,9 +146,7 @@ impl App for ClickyApp {
             });
 
             // Update label to reflect the global keybind
-            ui.label(
-                "Or press Left Ctrl + Left Alt + K globally to toggle clicking.",
-            );
+            ui.label("Or press Left Ctrl + Left Alt + K globally to toggle clicking.");
             ui.separator();
 
             // Display the current status with color
@@ -163,18 +164,35 @@ impl App for ClickyApp {
     }
 }
 
+fn load_icon(bytes: &[u8]) -> Result<IconData, String> {
+    let image = image::load(Cursor::new(bytes), ImageFormat::Png)
+        .map_err(|e| e.to_string())? // Convert image error to String
+        .to_rgba8();
+    let (width, height) = image.dimensions();
+    Ok(IconData {
+        rgba: image.into_raw(),
+        width,
+        height,
+    })
+}
+
 fn main() -> Result<(), eframe::Error> {
+    // Load the icon bytes at compile time
+    let icon_bytes = include_bytes!("../icon.png"); // Assumes icon.png is in the project root
+    let icon = load_icon(icon_bytes).expect("Failed to load application icon.");
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([300.0, 150.0]) // Increase window size
-            .with_resizable(false), // Optional: Make window non-resizable if desired
+            .with_inner_size([300.0, 150.0])
+            .with_resizable(false)
+            .with_icon(icon), // Set the loaded icon
         ..Default::default()
     };
 
     // Run the eframe application
     eframe::run_native(
-        "Clicky App", // Window title
+        "Clicky App",
         options,
-        Box::new(|_cc| Box::<ClickyApp>::default()), // Fix: Directly return the Boxed app state
+        Box::new(|_cc| Box::<ClickyApp>::default()),
     )
 }
